@@ -180,35 +180,41 @@ open class OAuth2Swift: OAuthSwift {
     }
 
     fileprivate func requestOAuthAccessToken(withParameters parameters: OAuthSwift.Parameters, headers: OAuthSwift.Headers? = nil, success: @escaping TokenSuccessHandler, failure: FailureHandler?) -> OAuthSwiftRequestHandle? {
-        let successHandler: OAuthSwiftHTTPRequest.SuccessHandler = { [unowned self]
+        let successHandler: OAuthSwiftHTTPRequest.SuccessHandler = { [weak self]
             response in
-            let responseJSON: Any? = try? response.jsonObject(options: .mutableContainers)
-
-            let responseParameters: OAuthSwift.Parameters
-
-            if let jsonDico = responseJSON as? [String:Any] {
-                responseParameters = jsonDico
-            } else {
-                responseParameters =  response.string?.parametersFromQueryString ?? [:]
+            
+            if let weakSelf = self
+            {
+                let responseJSON: Any? = try? response.jsonObject(options: .mutableContainers)
+                
+                let responseParameters: OAuthSwift.Parameters
+                
+                if let jsonDico = responseJSON as? [String:Any] {
+                    responseParameters = jsonDico
+                } else {
+                    responseParameters =  response.string?.parametersFromQueryString ?? [:]
+                }
+                
+                
+                guard let accessToken = responseParameters["access_token"] as? String else {
+                    let message =  NSLocalizedString("Could not get Access Token", comment: "Due to an error in the OAuth2 process, we couldn't get a valid token.")
+                    failure?(OAuthSwiftError.serverError(message: message))
+                    return
+                }
+                if let refreshToken = responseParameters["refresh_token"] as? String {
+                    weakSelf.client.credential.oauthRefreshToken = refreshToken.safeStringByRemovingPercentEncoding
+                }
+                
+                if let expiresIn = responseParameters["expires_in"] as? String, let offset = Double(expiresIn) {
+                    weakSelf.client.credential.oauthTokenExpiresAt = Date(timeInterval: offset, since: Date())
+                } else if let expiresIn = responseParameters["expires_in"] as? Double {
+                    weakSelf.client.credential.oauthTokenExpiresAt = Date(timeInterval: expiresIn, since: Date())
+                }
+                
+                weakSelf.client.credential.oauthToken = accessToken.safeStringByRemovingPercentEncoding
+                success(weakSelf.client.credential, response, responseParameters)
             }
-
-            guard let accessToken = responseParameters["access_token"] as? String else {
-                let message =  NSLocalizedString("Could not get Access Token", comment: "Due to an error in the OAuth2 process, we couldn't get a valid token.")
-                failure?(OAuthSwiftError.serverError(message: message))
-                return
-            }
-            if let refreshToken = responseParameters["refresh_token"] as? String {
-                self.client.credential.oauthRefreshToken = refreshToken.safeStringByRemovingPercentEncoding
-            }
-
-            if let expiresIn = responseParameters["expires_in"] as? String, let offset = Double(expiresIn) {
-                self.client.credential.oauthTokenExpiresAt = Date(timeInterval: offset, since: Date())
-            } else if let expiresIn = responseParameters["expires_in"] as? Double {
-                self.client.credential.oauthTokenExpiresAt = Date(timeInterval: expiresIn, since: Date())
-            }
-
-            self.client.credential.oauthToken = accessToken.safeStringByRemovingPercentEncoding
-            success(self.client.credential, response, responseParameters)
+            
         }
 
         guard let accessTokenUrl = accessTokenUrl else {
